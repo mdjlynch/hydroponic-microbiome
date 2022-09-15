@@ -1,5 +1,6 @@
 ---
-title: "Manuscript Analysis"
+title: "Pre-harvest hydroponic microbiome"
+subtitle: "manuscript analysis and figures"
 author: "Michael DJ Lynch, PhD"
 date: "`r format(Sys.time(), '%Y-%m-%d')`"
 output: html_document
@@ -8,10 +9,26 @@ output: html_document
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo=FALSE, warning=FALSE, message=FALSE, results = FALSE)
 
-library(phyloseq)
+# NOTES: 
+# Data is prepared and cleaned in the full composite analysis folder. Only pre-harvest
+# samples and some metadata (SampleType, GrowerCode, DateTime, Crop) are included here
+# for publication.
+
+# Data cleaning:
+#   - remove ASVs unclassified to Kingdom
+#   - remove ASVs classified to organelles
+#   - remove samples with fewer than 2000 reads passing filtering
+
+library(dplyr)
 library(ggplot2)
 library(microbiome)
+library(phyloseq)
+library(stringr)
 library(vegan)
+
+# specific palette for c("Berry", "Cucumber", "Greens", "Tomato")
+crop_palette = c("#A4036F", "#8AB898", "#B5C327", "#CC3434")
+names(crop_palette) = c("Berry", "Cucumber", "Greens", "Tomato")
 ```
 
 ## Hydroponic Microbiome
@@ -20,6 +37,484 @@ library(vegan)
 
 This repository contains the processed microbiome marker data and analysis notebook for the manusript *Analysis of the pre-harvest bacterial and eukaryotic hydroponic microbiome*.
 
-```{r environment_setup}
+```{r load_data}
+# for now, load the older data from Trevor's presentation
+# replace with new classification data for publication
+load(file = "../data/processed_phyloseq.RData")
 
+# Create a new, anonymous SampleID
+sample_data(ft16S)$AnonID = str_c(sample_data(ft16S)$GrowerCode, "-", 
+                                  str_sub(sample_data(ft16S)$SampleID, start = 3))
+sample_data(ft18S)$AnonID = str_c(sample_data(ft18S)$GrowerCode, "-", 
+                                  str_sub(sample_data(ft18S)$SampleID, start = 3))
+sample_data(ftITS)$AnonID = str_c(sample_data(ftITS)$GrowerCode, "-", 
+                                  str_sub(sample_data(ftITS)$SampleID, start = 3))
+# Clean up metadata for publication (keep only SampleType, DateTime, Day, Crop, CropGroup, GrowerCode)
+sample_data(ft16S) = dplyr::select(data.frame(sample_data(ft16S)), 
+                                   c(SampleType, DateTime, Day, Crop, CropGroup, GrowerCode, AnonID))
+sample_data(ft18S) = dplyr::select(data.frame(sample_data(ft18S)), 
+                                   c(SampleType, DateTime, Day, Crop, CropGroup, GrowerCode, AnonID))
+sample_data(ftITS) = dplyr::select(data.frame(sample_data(ftITS)), 
+                                   c(SampleType, DateTime, Day, Crop, CropGroup, GrowerCode, AnonID))
+
+# Drop all but pre-harvest samples
+temp_sample_data = sample_data(ft16S) %>% group_by(GrowerCode, SampleType, Crop) %>%
+  filter(DateTime == max(DateTime, na.rm = TRUE)) %>% data.frame()
+mft16S = subset_samples(ft16S, AnonID %in% temp_sample_data$AnonID)
+mft16S = subset_samples(mft16S, SampleType %in% c("Leachate", "Nutrient", "Root"))
+mft16S = prune_taxa(taxa_sums(mft16S) > 0, mft16S)
+mft16Sperc = transform_sample_counts(mft16S, function(x) x/sum(x) * 100)
+
+temp_sample_data = sample_data(ft18S) %>% group_by(GrowerCode, SampleType, Crop) %>%
+  filter(DateTime == max(DateTime, na.rm = TRUE)) %>% data.frame()
+mft18S = subset_samples(ft18S, AnonID %in% temp_sample_data$AnonID)
+mft18S = subset_samples(mft18S, SampleType %in% c("Leachate", "Nutrient", "Root"))
+mft18S = prune_taxa(taxa_sums(mft18S) > 0, mft18S)
+mft18Sperc = transform_sample_counts(mft18S, function(x) x/sum(x) * 100)
+
+temp_sample_data = sample_data(ftITS) %>% group_by(GrowerCode, SampleType, Crop) %>%
+  filter(DateTime == max(DateTime, na.rm = TRUE)) %>% data.frame()
+mftITS = subset_samples(ftITS, AnonID %in% temp_sample_data$AnonID)
+mftITS = subset_samples(mftITS, SampleType %in% c("Leachate", "Nutrient", "Root"))
+mftITS = prune_taxa(taxa_sums(mftITS) > 0, mftITS)
+mftITSperc = transform_sample_counts(mftITS, function(x) x/sum(x) * 100)
+```
+
+## alpha-diversity
+
+### Bacteria and Archaea (16S rRNA)
+
+```{r alpha_diversity_16S, fig.height = 4, fig.width = 4}
+# 16S
+prich = plot_richness(mft16S, x="GrowerCode", color="CropGroup", measures = "Observed") +
+  facet_grid("SampleType") +
+  #geom_boxplot(outlier.fill = "white") +
+  geom_jitter(height = 0, width = .2) +
+  labs(x = "Grower", y = "Observed ASVs")  +
+  scale_color_manual(values=crop_palette)
+  ggtitle("Observed ASV richness, pre-harvest sampling (16S rRNA)")
+prich$layers <- prich$layers[-1]
+plot(prich)
+
+pdiv = plot_richness(mft16S, x="GrowerCode", color="CropGroup", measures = "Shannon") +
+  facet_grid("SampleType") +
+  #geom_boxplot(outlier.fill = "white")
+  geom_jitter(height = 0, width = .2) +
+  labs(x = "Grower", y = "Shannon's (H')")  +
+  scale_color_manual(values=crop_palette)
+  ggtitle("Observed Shannon's diversity (H'), pre-harvest sampling (16S rRNA)")
+pdiv$layers <- pdiv$layers[-1]
+plot(pdiv)
+```
+
+### General Eukaryotes (18S rRNA)
+
+```{r alpha_diversity_18S, fig.height = 4, fig.width = 4}
+# 18S
+prich = plot_richness(mft18S, x="GrowerCode", color="CropGroup", measures = "Observed") +
+  facet_grid("SampleType") +
+  #geom_boxplot(outlier.fill = "white") +
+  geom_jitter(height = 0, width = .2) +
+  labs(x = "Grower", y = "Observed ASVs") +
+  scale_color_manual(values=crop_palette)
+  ggtitle("Observed ASV richness, pre-harvest sampling (18S rRNA)")
+prich$layers <- prich$layers[-1]
+plot(prich)
+
+pdiv = plot_richness(mft18S, x="GrowerCode", color="CropGroup", measures = "Shannon") +
+  facet_grid("SampleType") +
+  #geom_boxplot(outlier.fill = "white") +
+  geom_jitter(height = 0, width = .2) +
+  labs(x = "Grower", y = "Shannon's (H')") +
+  scale_color_manual(values=crop_palette)
+  ggtitle("Observed Shannon's diversity (H'), pre-harvest sampling (18S rRNA)")
+pdiv$layers <- pdiv$layers[-1]
+plot(pdiv)
+```
+
+### Fungi (ITS)
+
+```{r alpha_diversity_its, fig.height = 4, fig.width = 4}
+# ITS
+prich = plot_richness(mftITS, x="GrowerCode", color="CropGroup", measures = "Observed") +
+  facet_grid("SampleType") +
+  #geom_boxplot(outlier.fill = "white") +
+  geom_jitter(height = 0, width = .2) +
+  labs(x = "Grower", y = "Observed ASVs") +
+  scale_color_manual(values=crop_palette)
+  ggtitle("Observed ASV richness, pre-harvest sampling (ITS)")
+prich$layers <- prich$layers[-1]
+plot(prich)
+
+pdiv = plot_richness(mftITS, x="GrowerCode", color="CropGroup", measures = "Shannon") +
+  facet_grid("SampleType") +
+  #geom_boxplot(outlier.fill = "white") +
+  geom_jitter(height = 0, width = .2) +
+  labs(x = "Grower", y = "Shannon's (H')") +
+  scale_color_manual(values=crop_palette)
+  ggtitle("Observed Shannon's diversity (H'), pre-harvest sampling (ITS)")
+pdiv$layers <- pdiv$layers[-1]
+plot(pdiv)
+```
+
+Notable trends:
+
+1. Tomatoes tend to be pretty low in richness and diversity (G07 and G11), but G01 was higher.
+
+2. Cucumbers and berries have high diversity and richness, although with only a single grower it is hard to establish this as a crop effect rather than a grower effect.
+
+## Taxonomic Composition
+
+### Taxonomic heatmaps
+
+Investigating the taxonomic trends in teh top 100 ASVs for each marker gene.
+
+```{r taxonomic_heatmaps, fig.height = 6, fig.width = 7}
+
+mft16Sp = transform_sample_counts(mft16S, function(x) x/sum(x))
+sample_data(mft16Sp)$HeatmapName = paste0(sample_data(mft16Sp)$GrowerCode, ":",
+                                          sample_data(mft16Sp)$CropGroup, ":",
+                                          sample_data(mft16Sp)$SampleType)
+temp <- prune_taxa(names(sort(taxa_sums(mft16Sp),TRUE)[1:100]), mft16Sp)
+p = plot_heatmap(temp, sample.label="HeatmapName", taxa.label = "genus") + 
+  theme(axis.title.x = element_blank()) + ggtitle("Bacteria and Archaea, distribution of top 100 taxa.")
+plot(p)
+
+mft18Sp = transform_sample_counts(mft18S, function(x) x/sum(x))
+sample_data(mft18Sp)$HeatmapName = paste0(sample_data(mft18Sp)$GrowerCode, ":",
+                                          sample_data(mft18Sp)$CropGroup, ":",
+                                          sample_data(mft18Sp)$SampleType)
+temp <- prune_taxa(names(sort(taxa_sums(mft18Sp),TRUE)[1:100]), mft18Sp)
+p = plot_heatmap(temp, sample.label="HeatmapName", taxa.label = "genus") + 
+  theme(axis.title.x = element_blank()) + ggtitle("General Eukaryotes, distribution of top 100 taxa.")
+plot(p)
+
+mftITSp = transform_sample_counts(mftITS, function(x) x/sum(x))
+sample_data(mftITSp)$HeatmapName = paste0(sample_data(mftITSp)$GrowerCode, ":",
+                                          sample_data(mftITSp)$CropGroup, ":",
+                                          sample_data(mftITSp)$SampleType)
+temp <- prune_taxa(names(sort(taxa_sums(mftITSp),TRUE)[1:100]), mftITSp)
+p = plot_heatmap(temp, sample.label="HeatmapName", taxa.label = "genus") + 
+  theme(axis.title.x = element_blank())  + ggtitle("Fungi, distribution of top 100 taxa.")
+plot(p)
+```
+
+### Key taxa
+
+Here we will explore phylogenetic plots for specific taxa of interest, including *Pseudomonas*, *Rhodanobacter*, and *Opitus*. These figures show the phylogenetic diversity and sample distribution of ASVs over the marker region. The larger the tip symbols the more numerically abundant the ASV.
+
+```{r key_taxa_phylotypes, fig.height=5}
+# phylotypes for Pseudomonas spp.
+pseudomonasft = subset_taxa(mft16Sperc, genus == "Pseudomonas")
+plot_tree(pseudomonasft, size = "Abundance", color = "CropGroup", shape = "SampleType", nodelabf = nodeplotblank, ladderize = "left", base.spacing=0.08) +
+  scale_color_manual(values=crop_palette) + 
+  labs(size='Percent', title = "Pseudomonas") +
+  theme(plot.title = element_text(size=16, face = "italic"))
+
+pseudomonasft %>%
+      refseq() %>%
+      Biostrings::writeXStringSet("pseudomonas.fasta", append=FALSE,
+                                  compress=FALSE, format="fasta")
+
+# phylotyoes for Oceanospirialles (incl. Pokkaliibacter)
+oceanospirillalesft = subset_taxa(mft16Sperc, order == "Oceanospirillales")
+oceanospirillalesft %>%
+      refseq() %>%
+      Biostrings::writeXStringSet("oceanospirillales.fasta", append=FALSE,
+                                  compress=FALSE, format="fasta")
+plot_tree(oceanospirillalesft, size = "Abundance", color = "CropGroup", shape = "SampleType", nodelabf = nodeplotblank, ladderize = "left", base.spacing=0.08) +
+  scale_color_manual(values=crop_palette) + 
+  labs(size='Percent', title = "Oceanospirillales") +
+  theme(plot.title = element_text(size=16, face = "italic"))
+
+marinobacterft = subset_taxa(mft16Sperc, genus == "Marinobacter")
+# phylotypes for Flavobacterium
+flavobacteriumft = subset_taxa(mft16Sperc, genus == "Flavobacterium")
+flavobacteriumft = prune_taxa(taxa_sums(flavobacteriumft) > 1, flavobacteriumft)
+plot_tree(flavobacteriumft, size = "Abundance", color = "CropGroup", shape = "SampleType", nodelabf = nodeplotblank, ladderize = "left", base.spacing=0.08) +
+  scale_color_manual(values=crop_palette) + 
+  labs(size='Percent', title = "Flavobacterium") +
+  theme(plot.title = element_text(size=16, face = "italic"))
+flavobacteriumft %>%
+      refseq() %>%
+      Biostrings::writeXStringSet("flavobacterium.fasta", append=FALSE,
+                                  compress=FALSE, format="fasta")
+
+# Burkholderia
+burkholderiaft = subset_taxa(mft16Sperc, genus == "Burkholderia-Caballeronia-Paraburkholderia")
+plot_tree(burkholderiaft, size = "Abundance", color = "CropGroup", shape = "SampleType", nodelabf = nodeplotblank, ladderize = "left", base.spacing=0.08) + 
+  scale_color_manual(values=crop_palette) + 
+  labs(size='Percent', title = "Burkholderia-Caballeronia-Paraburkholderia") +
+  theme(plot.title = element_text(size=16, face = "italic"))
+burkholderiaft %>%
+      refseq() %>%
+      Biostrings::writeXStringSet("burkholderia.fasta", append=FALSE,
+                                  compress=FALSE, format="fasta")
+# phylotypes for Proteobacteria
+proteobacteriaft = subset_taxa(mft16Sperc, phylum == "Proteobacteria")
+
+# phylotypes for Bacillus
+bacillusft = subset_taxa(mft16Sperc, genus == "Bacillus")
+plot_tree(bacillusft, size = "Abundance", color = "CropGroup", shape = "SampleType", nodelabf = nodeplotblank, ladderize = "left", base.spacing = 0.08) +
+  scale_color_manual(values=crop_palette) + 
+  labs(size='Percent', title = "Bacillus") +
+  theme(plot.title = element_text(size=16, face = "italic"))
+bacillusft %>%
+      refseq() %>%
+      Biostrings::writeXStringSet("bacillus.fasta", append=FALSE,
+                                  compress=FALSE, format="fasta")
+# phylotypes for Nitrospira
+nitrospiraft = subset_taxa(mft16Sperc, genus == "Nitrospira")
+plot_tree(nitrospiraft, size = "Abundance", color = "CropGroup", shape = "SampleType", nodelabf = nodeplotblank, ladderize = "left", base.spacing = 0.08) +
+  scale_color_manual(values=crop_palette) + 
+  labs(size='Percent', title = "Nitrospira") +
+  theme(plot.title = element_text(size=16, face = "italic"))
+nitrospiraft %>%
+      refseq() %>%
+      Biostrings::writeXStringSet("nitrospira.fasta", append=FALSE,
+                                  compress=FALSE, format="fasta")
+
+
+# phylotypes for Xanthomonas
+xanthomonasft = subset_taxa(mft16Sperc, genus == "Xanthomonas")
+plot_tree(xanthomonasft, size = "Abundance", color = "CropGroup", shape = "SampleType", nodelabf = nodeplotblank, ladderize = "left", base.spacing=0.08) +
+  scale_color_manual(values=crop_palette) + 
+  labs(size='Percent', title = "Xanthomonas") +
+  theme(plot.title = element_text(size=16, face = "italic"))
+xanthomonasft %>%
+      refseq() %>%
+      Biostrings::writeXStringSet("xanthomonas.fasta", append=FALSE,
+                                  compress=FALSE, format="fasta")
+
+# phylotypes for Clavibacter - no Clavibacter in this subset
+#clavibacterft = subset_taxa(mft16S, genus == "Clavibacter")
+
+# phylotypes for Agrobacterium - no Agrobacterium sensu stricto in this subset
+rhizobiumft = subset_taxa(mft16Sperc, genus == "Allorhizobium-Neorhizobium-Pararhizobium-Rhizobium")
+plot_tree(rhizobiumft, size = "Abundance", color = "CropGroup", shape = "SampleType", nodelabf = nodeplotblank, ladderize = "left", base.spacing=0.08) +
+  scale_color_manual(values=crop_palette) + 
+  labs(size='Percent', title = "Allorhizobium-Neorhizobium-Pararhizobium-Rhizobium") +
+  theme(plot.title = element_text(size=16, face = "italic"))
+rhizobiumft %>%
+      refseq() %>%
+      Biostrings::writeXStringSet("rhizobium.fasta", append=FALSE,
+                                  compress=FALSE, format="fasta")
+
+# phylotypes for Pythium - no Pythium in this subset
+#pythiumft = subset_taxa(mftI8S, genus == "Pythium")
+
+# phylotypes for Botrytis - no Botrytis in this subset
+#botrytisft = subset_taxa(mftITS, genus == "Botrytis")
+
+```
+
+```{r key_taxa_cycles}
+# nitrifiers
+
+# denitrifiers
+
+```
+
+
+
+```{r nutrient_solution_and_denitrifiers}
+### Ecological niches in hydroponics
+# Any other denitrifiers, or organisms that are associated with the conditions expected in nutrient solution?
+
+```
+
+
+## beta-diversity
+
+```{r data_normalization}
+mft16Srl = subset_samples(mft16S, SampleType %in% c("Leachate", "Root"))
+mft18Srl = subset_samples(mft18S, SampleType %in% c("Leachate", "Root"))
+mftITSrl = subset_samples(mftITS, SampleType %in% c("Leachate", "Root"))
+
+# subset to root and leachate
+mft16Srl_rare = phyloseq::rarefy_even_depth(mft16Srl, rngseed = 123, replace = FALSE)
+mft16Srl_clr = microbiome::transform(mft16Srl, "clr")
+mft18Srl_rare = phyloseq::rarefy_even_depth(mft18Srl, rngseed = 123, replace = FALSE)
+mft18Srl_clr = microbiome::transform(mft18Srl, "clr")
+mftITSrl_rare = phyloseq::rarefy_even_depth(mftITSrl, rngseed = 123, replace = FALSE)
+mftITSrl_clr = microbiome::transform(mftITSrl, "clr")
+```
+
+Included here are the (A) sample ordinations and (B) sample ordinations with positions of top ten most abundant ASVs (amplified sequence variants).
+
+### Bacteria and Archaea (16S rRNA)
+
+```{r beta_16S}
+# PCoA Weighted Unifrac
+mft16Srl_rare_ord = ordinate(mft16Srl_rare, method = "PCoA", distance = "wunifrac")
+
+p_ord = plot_ordination(mft16Srl_rare, mft16Srl_rare_ord, type = "samples", color = "CropGroup", label = "GrowerCode", shape = "SampleType")
+
+p_ord + labs(title = "(A) 16S rRNA (Bacteria, Archaea), PCoA (weighted Unifrac)") + geom_point(size = 3) + scale_color_manual(values=crop_palette)
+```
+
+```{r beta_16S_biplot}
+biplotft = mft16Srl_rare
+
+# modify the taxonomy table so that genus presents as "unknown" (NA interferes with plotting)
+temp_tax_table = data.frame(tax_table(biplotft))
+temp_tax_table[is.na(temp_tax_table)] = "unknown"
+tax_table(biplotft) = as.matrix(temp_tax_table)
+
+tax_table(biplotft) <- cbind(tax_table(biplotft), OTU = taxa_names(biplotft))
+plot_otus <- names(sort(taxa_sums(biplotft),TRUE)[1:10])
+ptemp <- plot_ordination(physeq = biplotft,
+                         ordination = mft16Srl_rare_ord,
+                         type="biplot",
+                         color = "CropGroup",
+                         shape = "genus")
+	# force colours to the default scale_fill_hue used by ggplot2, with black for taxa
+  # this keeps colours consistent between sample ordinations and biplot
+number_of_groups = length(unique(sample_data(biplotft)[["CropGroup"]]))
+manual_colours = c("#000000", scales::hue_pal()(number_of_groups))
+names(manual_colours) = c("Taxa",
+                      levels(ptemp$data[["CropGroup"]])[levels(ptemp$data[["CropGroup"]])!="Taxa"])
+  
+ptemp$data = ptemp$data %>%
+    filter((id.type == "Samples") | (OTU %in% plot_otus))
+
+# manually assign shapes
+# - the shape layer is assigned to all genera above, so easily runs out of shapes
+# - here we re-set to only apply shapes to top ten genera
+temp_subset = subset(otu_table(biplotft), select = colnames(otu_table(biplotft)) %in% plot_otus)
+temp_physeq = merge_phyloseq(temp_subset, tax_table(biplotft), sample_data(biplotft))
+shape_names = get_taxa_unique(temp_physeq, "genus")
+manual_shapes = 0:(0 + length(shape_names) - 1)
+names(manual_shapes) = shape_names
+manual_shapes["Samples"] = 16
+
+ptemp + scale_color_manual(values = manual_colours) + scale_shape_manual(values = manual_shapes) +
+  labs(title = "(B) Top 10 taxa by abundance",
+       shape = "Shape (genus)", 
+       color = paste("Colour (Crop)", sep = ""),
+       size = "Type") +
+  guides(color = guide_legend(order = 1), 
+         shape = guide_legend(order = 2)) +
+  theme(legend.key.size = unit(0.35, 'cm'), 
+        legend.title = element_text(size=10),
+        legend.text = element_text(size=8)) +
+  scale_color_manual(values=crop_palette)
+```
+
+### General eukaryotes (18S rRNA)
+
+```{r beta_18S}
+# PCoA Weighted Unifrac
+mft18Srl_rare_ord = ordinate(mft18Srl_rare, method = "PCoA", distance = "wunifrac")
+
+p_ord = plot_ordination(mft18Srl_rare, mft18Srl_rare_ord, type = "samples", color = "CropGroup", label = "GrowerCode", shape = "SampleType")
+
+p_ord + labs(title = "(A) 18S rRNA (Eukaryota), PCoA (weighted Unifrac)") + geom_point(size = 3) + scale_color_manual(values=crop_palette)
+```
+
+```{r beta_18S_biplot}
+biplotft = mft18Srl_rare
+
+# modify the taxonomy table so that genus presents as "unknown" (NA interferes with plotting)
+temp_tax_table = data.frame(tax_table(biplotft))
+temp_tax_table[is.na(temp_tax_table)] = "unknown"
+tax_table(biplotft) = as.matrix(temp_tax_table)
+
+tax_table(biplotft) <- cbind(tax_table(biplotft), OTU = taxa_names(biplotft))
+plot_otus <- names(sort(taxa_sums(biplotft),TRUE)[1:10])
+ptemp <- plot_ordination(physeq = biplotft,
+                         ordination = mft18Srl_rare_ord,
+                         type="biplot",
+                         color = "CropGroup",
+                         shape = "genus")
+	# force colours to the default scale_fill_hue used by ggplot2, with black for taxa
+  # this keeps colours consistent between sample ordinations and biplot
+number_of_groups = length(unique(sample_data(biplotft)[["CropGroup"]]))
+manual_colours = c("#000000", scales::hue_pal()(number_of_groups))
+names(manual_colours) = c("Taxa",
+                      levels(ptemp$data[["CropGroup"]])[levels(ptemp$data[["CropGroup"]])!="Taxa"])
+  
+ptemp$data = ptemp$data %>%
+    filter((id.type == "Samples") | (OTU %in% plot_otus))
+
+# manually assign shapes
+# - the shape layer is assigned to all genera above, so easily runs out of shapes
+# - here we re-set to only apply shapes to top ten genera
+temp_subset = subset(otu_table(biplotft), select = colnames(otu_table(biplotft)) %in% plot_otus)
+temp_physeq = merge_phyloseq(temp_subset, tax_table(biplotft), sample_data(biplotft))
+shape_names = get_taxa_unique(temp_physeq, "genus")
+manual_shapes = 0:(0 + length(shape_names) - 1)
+names(manual_shapes) = shape_names
+manual_shapes["Samples"] = 16
+
+ptemp + scale_color_manual(values = manual_colours) + scale_shape_manual(values = manual_shapes) +
+  labs(title = "(B) Top 10 taxa by abundance",
+       shape = "Shape (genus)", 
+       color = paste("Colour (Crop)", sep = ""),
+       size = "Type") +
+  guides(color = guide_legend(order = 1), 
+         shape = guide_legend(order = 2)) +
+  theme(legend.key.size = unit(0.35, 'cm'), 
+        legend.title = element_text(size=10),
+        legend.text = element_text(size=8)) +
+  scale_color_manual(values=crop_palette)
+```
+
+### Fungi (ITS)
+
+```{r beta_ITS}
+# PCoA Weighted Unifrac
+mftITSrl_rare_ord = ordinate(mftITSrl_rare, method = "PCoA", distance = "wunifrac")
+
+p_ord = plot_ordination(mftITSrl_rare, mftITSrl_rare_ord, type = "samples", color = "CropGroup", label = "GrowerCode", shape = "SampleType")
+
+p_ord + labs(title = "(A) ITS (Fungi), PCoA (weighted Unifrac)") + geom_point(size = 3) + scale_color_manual(values=crop_palette)
+```
+
+```{r beta_ITS_biplot}
+biplotft = mftITSrl_rare
+
+# modify the taxonomy table so that genus presents as "unknown" (NA interferes with plotting)
+temp_tax_table = data.frame(tax_table(biplotft))
+temp_tax_table[is.na(temp_tax_table)] = "unknown"
+tax_table(biplotft) = as.matrix(temp_tax_table)
+
+tax_table(biplotft) <- cbind(tax_table(biplotft), OTU = taxa_names(biplotft))
+plot_otus <- names(sort(taxa_sums(biplotft),TRUE)[1:10])
+ptemp <- plot_ordination(physeq = biplotft,
+                         ordination = mftITSrl_rare_ord,
+                         type="biplot",
+                         color = "CropGroup",
+                         shape = "genus")
+	# force colours to the default scale_fill_hue used by ggplot2, with black for taxa
+  # this keeps colours consistent between sample ordinations and biplot
+number_of_groups = length(unique(sample_data(biplotft)[["CropGroup"]]))
+manual_colours = c("#000000", scales::hue_pal()(number_of_groups))
+names(manual_colours) = c("Taxa",
+                      levels(ptemp$data[["CropGroup"]])[levels(ptemp$data[["CropGroup"]])!="Taxa"])
+  
+ptemp$data = ptemp$data %>%
+    filter((id.type == "Samples") | (OTU %in% plot_otus))
+
+# manually assign shapes
+# - the shape layer is assigned to all genera above, so easily runs out of shapes
+# - here we re-set to only apply shapes to top ten genera
+temp_subset = subset(otu_table(biplotft), select = colnames(otu_table(biplotft)) %in% plot_otus)
+temp_physeq = merge_phyloseq(temp_subset, tax_table(biplotft), sample_data(biplotft))
+shape_names = get_taxa_unique(temp_physeq, "genus")
+manual_shapes = 0:(0 + length(shape_names) - 1)
+names(manual_shapes) = shape_names
+manual_shapes["Samples"] = 16
+
+ptemp + scale_color_manual(values = manual_colours) + scale_shape_manual(values = manual_shapes) +
+  labs(title = "(B) Top 10 taxa by abundance",
+       shape = "Shape (genus)", 
+       color = paste("Colour (Crop)", sep = ""),
+       size = "Type") +
+  guides(color = guide_legend(order = 1), 
+         shape = guide_legend(order = 2)) +
+  theme(legend.key.size = unit(0.35, 'cm'), 
+        legend.title = element_text(size=10),
+        legend.text = element_text(size=8)) +
+  scale_color_manual(values=crop_palette)
 ```
